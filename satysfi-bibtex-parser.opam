@@ -1,0 +1,33 @@
+opam-version: "2.0"
+name: "satysfi-bibtex-parser"
+version: "0.1.0"
+synopsis: "Bibtex format parser with SATySFi"
+description: """
+Bibtex format parser with SATySFi.
+"""
+maintainer: "Naoki Kaneko <puripuri2100@gmail.com>"
+authors: "Naoki Kaneko <puripuri2100@gmail.com>"
+license: "MIT"
+homepage: "https://github.com/puripuri2100/satysfi-bibtex-parser"
+dev-repo: "git+https://github.com/puripuri2100/satysfi-bibtex-parser.git"
+bug-reports: "https://github.com/puripuri2100/satysfi-bibtex-parser/issues"
+depends: [
+  "satysfi" { >= "0.0.6" & < "1.0" }
+  "satyrographos" { >= "0.0.2.6" & < "0.0.3" }
+
+  # If your library depends on other libraries, please write down here
+  "satysfi-dist"
+  "satysfi-base" {>= "1.6.0" & < "2.0"}
+]
+build: [
+  ["satyrographos" "opam" "build"
+    "--name" "bibtex-parser"
+    "--prefix" "%{prefix}%"
+    "--script" "%{build}%/Satyristes"]
+]
+install: [
+  ["satyrographos" "opam" "install"
+    "--name" "bibtex-parser"
+    "--prefix" "%{prefix}%"
+    "--script" "%{build}%/Satyristes"]
+]

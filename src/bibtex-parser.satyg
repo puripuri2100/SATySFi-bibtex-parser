@@ -1,0 +1,658 @@
+@require: base/list-ext
+@require: base/eq
+@require: base/map
+@require: base/int
+@require: base/string
+
+
+
+module BibTeXParser: sig
+
+  type entry
+  type bibtex
+
+  val bibtex-to-list : bibtex -> (string * entry) list
+  val get-entry : string -> bibtex -> entry option
+  val get-entry-type : entry -> string
+
+
+  type process-text
+  val identity : process-text
+  val uppercase-ascii : process-text
+  val lowercase-ascii : process-text
+  val capitalize-ascii   : process-text
+  val uncapitalize-ascii : process-text
+
+  val get-text : string -> string option -> process-text -> entry -> (string list) option
+
+
+  val parser : string -> bibtex
+  val parser-from-file : string -> bibtex
+
+end = struct
+
+
+  let (^::) v (lst, xs) = (v::lst, xs)
+
+  let string-eq = Eq.make String.equal
+
+  let lf = string-unexplode [0x0A]
+
+
+
+  type text-token =
+    | Text of string
+    | UnbreakText of string
+
+
+  type entry = (|
+    entry-type: string;
+    fields : string (text-token list) Map.t;
+  |)
+
+
+  type bibtex = string entry Map.t
+
+
+  let bibtex-to-list bibtex = Map.to-list string-eq bibtex
+
+  let get-entry cite bibtex = Map.of- string-eq cite bibtex
+
+  let get-entry-type entry = entry#entry-type
+
+
+
+
+  type process-text = text-token list -> string
+
+  let-rec identity lst =
+    match lst with
+    | (Text(t))::xs -> t ^ (identity xs)
+    | (UnbreakText(t))::xs -> t ^ (identity xs)
+    | [] -> String.empty
+
+  let uppercase-ascii lst =
+    lst
+    |> List.map (fun t -> (
+      match t with
+      | UnbreakText(s) -> s
+      | Text(s) -> String.uppercase-ascii s
+    ))
+    |> (fun l -> String.concat l)
+
+  let lowercase-ascii lst =
+    lst
+    |> List.map (fun t -> (
+      match t with
+      | UnbreakText(s) -> s
+      | Text(s) -> String.lowercase-ascii s
+    ))
+    |> (fun l -> String.concat l)
+
+  let capitalize-ascii lst =
+    match lst with
+    | (Text(s))::xs -> String.capitalize-ascii s ^ identity xs
+    | _ -> identity lst
+
+  let uncapitalize-ascii lst =
+    match lst with
+    | (Text(s))::xs -> String.uncapitalize-ascii s ^ identity xs
+    | _ -> identity lst
+
+
+  let-rec split-text split-opt text-lst =
+    match split-opt with
+    | None -> [text-lst]
+    | Some(re-str) -> (
+      let re = regexp-of-string re-str in
+      let-rec sub lst =
+        match lst with
+        | (Text(s))::xs -> (
+          let tail = sub xs in
+          let new-lst =
+            s |> split-on-regexp re
+              |> List.map (fun (n, s) -> Text ((String.pow n String.empty) ^ s))
+          in
+          match tail with
+          | [] -> List.map (fun t -> [t]) new-lst
+          | l::xs -> (
+            match List.reverse new-lst with
+            | t2::xs2 -> (
+              List.append (xs2 |> List.reverse |> List.map (fun t -> [t])) ((t2 :: l)::xs)
+            )
+            | _ -> tail % unreachable
+          )
+        )
+        | (UnbreakText(s))::xs -> (
+          let tail = sub xs in
+          match tail with
+          | [] -> [[UnbreakText(s)]]
+          | l::xs -> ((UnbreakText(s))::l)::xs
+        )
+        | [] -> []
+      in
+      sub text-lst
+    )
+
+
+
+  let get-text key split-opt f entry =
+    let text-lst-opt = Map.of- string-eq key entry#fields in
+    match text-lst-opt with
+    | None -> None
+    | Some(text-lst) -> (
+      let l =
+        text-lst
+        |> split-text split-opt
+        |> List.map f
+      in
+      Some(l)
+    )
+
+
+  type token =
+    | String of string
+    | TextList of text-token list
+    | Sharp
+    | Comma
+    | Equal
+    | LCurlyBraces
+    | RCurlyBraces
+    | AtMark
+    | EOF
+
+  let token2message token =
+    match token with
+    | String(s) -> `String("`^s^`")`
+    | TextList(_) -> `TextList`
+    | Sharp -> `#`
+    | Comma -> `,`
+    | Equal -> `=`
+    | LCurlyBraces -> `{`
+    | RCurlyBraces -> `}`
+    | AtMark -> `@`
+    | EOF -> `EOF`
+
+  type mode =
+    | PreambleMode
+    | CommentMode
+    | StringMode
+    | BibMode of string
+
+
+  let parse-accent m c =
+    match (m, c) with
+    | (`'`, `A`) -> `Á`
+    | (`'`, `a`) -> `á`
+    | (`'`, `C`) -> `Ć`
+    | (`'`, `c`) -> `ć`
+    | (`'`, `E`) -> `É`
+    | (`'`, `e`) -> `é`
+    | (`'`, `I`) -> `Í`
+    | (`'`, `i`) -> `í`
+    | (`'`, `N`) -> `Ń`
+    | (`'`, `n`) -> `ń`
+    | (`'`, `O`) -> `Ó`
+    | (`'`, `o`) -> `ó`
+    | (`'`, `U`) -> `Ú`
+    | (`'`, `u`) -> `ú`
+    | (`'`, `S`) -> `Ś`
+    | (`'`, `s`) -> `ś`
+    | (`'`, `Y`) -> `Ý`
+    | (`'`, `y`) -> `ý`
+    | (`'`, `Z`) -> `Ź`
+    | (`'`, `z`) -> `ź`
+  
+    | (`.`, `I`) -> `İ`
+    | (`.`, `Z`) -> `Ż`
+    | (`.`, `z`) -> `ż`
+  
+    | (`"`, `A`) -> `Ä`
+    | (`"`, `a`) -> `ä`
+    | (`"`, `O`) -> `Ö`
+    | (`"`, `o`) -> `ö`
+    | (`"`, `U`) -> `Ü`
+    | (`"`, `u`) -> `ü`
+  
+    | (`` ` ``, `A`) -> `À`
+    | (`` ` ``, `a`) -> `à`
+    | (`` ` ``, `E`) -> `È`
+    | (`` ` ``, `e`) -> `è`
+    | (`` ` ``, `U`) -> `Ù`
+    | (`` ` ``, `u`) -> `ù`
+  
+    | (`^`, `A`) -> `Â`
+    | (`^`, `a`) -> `â`
+    | (`^`, `E`) -> `Ê`
+    | (`^`, `e`) -> `ê`
+    | (`^`, `I`) -> `Î`
+    | (`^`, `i`) -> `î`
+    | (`^`, `O`) -> `Ô`
+    | (`^`, `o`) -> `ô`
+    | (`^`, `U`) -> `Û`
+    | (`^`, `u`) -> `û`
+  
+    | (`c`, `C`) -> `Ç`
+    | (`c`, `c`) -> `ç`
+    | (`c`, `S`) -> `Ş`
+    | (`c`, `s`) -> `ş`
+  
+    | (`~`, `A`) -> `Ã`
+    | (`~`, `a`) -> `ã`
+    | (`~`, `E`) -> `Ẽ`
+    | (`~`, `e`) -> `ẽ`
+    | (`~`, `N`) -> `Ñ`
+    | (`~`, `n`) -> `ñ`
+    | (`~`, `O`) -> `Õ`
+    | (`~`, `o`) -> `õ`
+    | (`~`, `I`) -> `Ĩ`
+    | (`~`, `i`) -> `ĩ`
+    | (`~`, `U`) -> `Ũ`
+    | (`~`, `u`) -> `ũ`
+    | (`~`, `Y`) -> `Ỹ`
+    | (`~`, `y`) -> `ỹ`
+  
+    | (`=`, `A`) -> `Ā`
+    | (`=`, `a`) -> `ā`
+    | (`=`, `E`) -> `Ē`
+    | (`=`, `e`) -> `ē`
+    | (`=`, `I`) -> `Ī`
+    | (`=`, `i`) -> `ī`
+    | (`=`, `O`) -> `Ō`
+    | (`=`, `o`) -> `ō`
+    | (`=`, `U`) -> `Ū`
+    | (`=`, `u`) -> `ū`
+  
+    | (`v`, `A`) -> `Ǎ`
+    | (`v`, `a`) -> `ǎ`
+    | (`v`, `E`) -> `Ě`
+    | (`v`, `e`) -> `ě`
+    | (`v`, `I`) -> `Ǐ`
+    | (`v`, `i`) -> `ǐ`
+    | (`v`, `O`) -> `Ǒ`
+    | (`v`, `o`) -> `ǒ`
+    | (`v`, `U`) -> `Ǔ`
+    | (`v`, `u`) -> `ǔ`
+  
+    | (`H`, `O`) -> `Ő`
+    | (`H`, `o`) -> `ő`
+    | (`H`, `U`) -> `Ű`
+    | (`H`, `u`) -> `ű`
+  
+    | (`u`, `A`) -> `Ă`
+    | (`u`, `a`) -> `ă`
+    | (`u`, `G`) -> `Ğ`
+    | (`u`, `g`) -> `ğ`
+
+    | _ -> abort-with-message (`Error: Unexpected character "\`# ^ m ^ c ^ `"`)
+
+
+
+  let-rec lex-text end-char depth value-lst sbuf codepoint-lst =
+    match codepoint-lst with
+    %%%% ---
+    | 0x2D::0x2D::0x2D::xs -> lex-text end-char depth value-lst (sbuf^`—`) xs
+    %%%% --
+    | 0x2D::0x2D::xs -> lex-text end-char depth value-lst (sbuf^`-`) xs
+    %%%% \OE
+    | 0x5C::0x4F::0x45::xs -> lex-text end-char depth value-lst (sbuf^`Œ`) xs
+    %%%% \oe
+    | 0x5C::0x6F::0x65::xs -> lex-text end-char depth value-lst (sbuf^`œ`) xs
+    %%%% \AE
+    | 0x5C::0x41::0x45::xs -> lex-text end-char depth value-lst (sbuf^`Æ`) xs
+    %%%% \ae
+    | 0x5C::0x61::0x65::xs -> lex-text end-char depth value-lst (sbuf^`æ`) xs
+    %%%% \AA
+    | 0x5C::0x41::0x41::xs -> lex-text end-char depth value-lst (sbuf^`Å`) xs
+    %%%% \aa
+    | 0x5C::0x61::0x61::xs -> lex-text end-char depth value-lst (sbuf^`å`) xs
+    %%%% \O
+    | 0x5C::0x4F::xs -> lex-text end-char depth value-lst (sbuf^`Ø`) xs
+    %%%% \o
+    | 0x5C::0x6F::xs -> lex-text end-char depth value-lst (sbuf^`ø`) xs
+    %%%% \L
+    | 0x5C::0x4C::xs -> lex-text end-char depth value-lst (sbuf^`Ł`) xs
+    %%%% \l
+    | 0x5C::0x6C::xs -> lex-text end-char depth value-lst (sbuf^`ł`) xs
+    %%%% \ss
+    | 0x5C::0x73::0x73::xs -> lex-text end-char depth value-lst (sbuf^`ß`) xs
+    %%%% \?'
+    | 0x5C::0x3F::0x27::xs -> lex-text end-char depth value-lst (sbuf^`¿`) xs
+    %%%% \!'
+    | 0x5C::0x21::0x27::xs -> lex-text end-char depth value-lst (sbuf^`¡`) xs
+
+    %%%% アクセントマーク
+    | 0x5C::accent-mark::latin::xs when (
+        (
+          accent-mark == 0x27 % '
+          || accent-mark == 0x60 % `
+          || accent-mark == 0x5E % ^
+          || accent-mark == 0x7E % ~
+          || accent-mark == 0x3D % =
+          || accent-mark == 0x2E % .
+          || accent-mark == 0x22 % "
+          || accent-mark == 0x75 % u
+          || accent-mark == 0x76 % v
+          || accent-mark == 0x48 % H
+          || accent-mark == 0x63 % c
+          || accent-mark == 0x64 % d
+          || accent-mark == 0x62 % b
+        )
+        &&
+        (0x41 <= latin && latin <= 0x5A) || (0x61 <= latin && latin <= 0x7A)
+      ) -> (
+        let s = parse-accent (string-unexplode [accent-mark]) (string-unexplode [latin]) in
+        lex-text end-char depth value-lst (sbuf^s) xs
+      )
+      | 0x5C::accent-mark::0x7B::latin::0x7D::xs when (
+          (
+            accent-mark == 0x27 % '
+            || accent-mark == 0x60 % `
+            || accent-mark == 0x5E % ^
+            || accent-mark == 0x7E % ~
+            || accent-mark == 0x3D % =
+            || accent-mark == 0x2E % .
+            || accent-mark == 0x22 % "
+            || accent-mark == 0x75 % u
+            || accent-mark == 0x76 % v
+            || accent-mark == 0x48 % H
+            || accent-mark == 0x63 % c
+            || accent-mark == 0x64 % d
+            || accent-mark == 0x62 % b
+          )
+          &&
+          (0x41 <= latin && latin <= 0x5A) || (0x61 <= latin && latin <= 0x7A)
+        ) -> (
+          let s = parse-accent (string-unexplode [accent-mark]) (string-unexplode [latin]) in
+          lex-text end-char depth value-lst (sbuf^s) xs
+        )
+
+    %%%% \&
+      | 0x5C::0x26::xs -> lex-text end-char depth value-lst (sbuf^`&`) xs
+    %%%% \{
+    | 0x5C::0x7B::xs -> lex-text end-char depth value-lst (sbuf^`{`) xs
+    %%%% \"
+    | 0x5C::0x22::xs -> lex-text end-char depth value-lst (sbuf^`"`) xs
+    %%%% \\
+    | 0x5C::0x5C::xs -> lex-text end-char depth value-lst (sbuf^`\`) xs
+    %%%% \$
+    | 0x5C::0x24::xs -> lex-text end-char depth value-lst (sbuf^`$`) xs
+    %%%% \_
+    | 0x5C::0x5F::xs -> lex-text end-char depth value-lst (sbuf^`_`) xs
+    %%%% \%
+    | 0x5C::0x25::xs -> lex-text end-char depth value-lst (sbuf^`%`) xs
+    %%%% {
+    | 0x7B::xs -> (
+      if depth == 0 && String.equal `}` end-char then
+        lex-text end-char (depth + 1) ((Text sbuf) :: value-lst) String.empty xs
+      else
+        lex-text end-char depth value-lst (sbuf^`{`) xs
+    )
+    %%%% }
+    | 0x7D::xs -> (
+      if depth == 0 && String.equal `}` end-char then
+        (List.reverse ((Text sbuf) :: value-lst), xs)
+      else if depth == 1 then
+        lex-text end-char 0 ((UnbreakText sbuf) :: value-lst) String.empty xs
+      else if depth > 1 then
+        lex-text end-char (depth - 1) value-lst sbuf xs
+      else if String.equal `}` end-char then
+        abort-with-message `Error: Unexpected character "}"`
+      else
+        lex-text end-char depth value-lst (sbuf^`}`) xs
+    )
+    %%%% "
+    | 0x22::xs -> (
+      if depth == 0 && String.equal `"` end-char then
+        (List.reverse ((Text sbuf) :: value-lst), xs)
+      else if String.equal `"` end-char then
+        abort-with-message `Error: Unexpected character "`
+      else
+        lex-text end-char depth value-lst (sbuf^`"`) xs
+    )
+    | 0x5C::_ -> abort-with-message `Error: Unsupported TeX commands`
+    | x::xs -> lex-text end-char depth value-lst (sbuf^(string-unexplode [x])) xs
+    | [] -> (List.reverse ((Text sbuf) :: value-lst), [])
+
+
+  let-rec lex-string sbuf codepoint-lst =
+    match codepoint-lst with
+    %%%% whitespace , { } = # @
+    | x::xs when (
+        (9 <= x && x <= 13)
+        || x == 0x20
+        || x == 0x2C
+        || x == 0x7B
+        || x == 0x7D
+        || x == 0x3D
+        || x == 0x23
+        || x == 0x40
+      )-> (
+      (sbuf, codepoint-lst)
+    )
+    | x::xs -> lex-string (sbuf^(string-unexplode [x])) xs
+    | [] -> (sbuf, [])
+
+
+  let-rec lex-int s codepoint-lst =
+    match codepoint-lst with
+    | x::xs when 0x30 <= x && x <= 0x39 -> (
+      lex-int (s^(string-unexplode [x])) xs
+    )
+    | _ -> (s, codepoint-lst)
+
+  %! int list -> (token list * token list)
+  let-rec lex-filed codepoint-lst =
+    match codepoint-lst with
+      %%%% whitespace
+      | x::xs when (9 <= x && x <= 13) || x == 0x20 -> (
+        lex-filed xs
+      )
+      %%%% }
+      | 0x7D::xs -> ([RCurlyBraces], xs)
+      %%%% ,
+      | 0x2C::xs -> (
+        Comma ^:: (lex-filed xs)
+      )
+      %%%% =
+      | 0x3D::xs -> (
+        Equal ^:: (lex-filed xs)
+      )
+      %%%% #
+      | 0x23::xs -> (
+        Sharp ^:: (lex-filed xs)
+      )
+      %%%% "
+      | 0x22::xs -> (
+        let (text-lst, xs) = lex-text `"` 0 [] String.empty xs in
+        (TextList text-lst) ^:: (lex-filed xs)
+      )
+      %%%% {
+      | 0x7B::xs -> (
+        let (text-lst, xs) = lex-text `}` 0 [] String.empty xs in
+        (TextList text-lst) ^:: (lex-filed xs)
+      )
+      | x::xs when 0x30 <= x && x <= 0x39 -> (
+        let (n, xs) = lex-int (string-unexplode [x]) xs in
+        (TextList [Text(n)]) ^:: lex-filed xs
+      )
+      | x::xs -> (
+        let (s, xs) = lex-string String.empty codepoint-lst in
+        if String.equal s String.empty then
+          abort-with-message (`Error: Unexpected character "`# ^ string-unexplode [x] ^ `"`)
+        else
+          (String s) ^:: (lex-filed xs)
+      )
+      | _ -> abort-with-message `Error: Unexpected EOF`
+
+
+  %! int list -> token list
+  let-rec lex-bib codepoint-lst =
+    match codepoint-lst with
+      %%%% whitespace
+      | x::xs when (9 <= x && x <= 13) || x == 0x20 -> (
+        lex-bib xs
+      )
+      %%%% @
+      | 0x40::xs -> (
+        AtMark :: (lex-bib xs)
+      )
+      %%%% {
+      | 0x7B::xs -> (
+        let (token-lst, xs) = lex-filed xs in
+        List.append (LCurlyBraces :: token-lst) (lex-bib xs)
+      )
+      | x::xs -> (
+        let (s, xs) = lex-string String.empty codepoint-lst in
+        if String.equal s String.empty then
+          abort-with-message (`Error: Unexpected character "`# ^ string-unexplode [x] ^ `"`)
+        else
+          (String s) :: (lex-bib xs)
+      )
+      | [] -> [EOF]
+
+
+  %! string (text-token list) Map.t -> token list -> (text-token list, token list)
+  let-rec parse-text map token-lst =
+    match token-lst with
+    | (String key)::(Sharp)::xs -> (
+      let (lst2, xs) = parse-text map xs in
+      let v-opt = Map.of- string-eq key map in
+      match v-opt with
+      | None -> abort-with-message (`Error: Not found value of `# ^ key)
+      | Some(lst1) -> (
+        let rev = List.reverse lst1 in
+        match (rev, lst2) with
+        | ((Text t1)::xs-rev, (Text t2)::xs2) -> (
+          let new-lst =
+            List.append (List.reverse xs-rev) (Text(t1^t2) :: xs2)
+          in
+          (new-lst, xs)
+        )
+        | ((UnbreakText t1)::xs-rev, (UnbreakText t2)::xs2) -> (
+          let new-lst =
+            List.append (List.reverse xs-rev) (UnbreakText(t1^t2) :: xs2)
+          in
+          (new-lst, xs)
+        )
+        | _ -> (List.append lst1 lst2, xs)
+      )
+    )
+    | (TextList lst)::(Sharp)::xs -> (
+      let (lst2, xs) = parse-text map xs in
+      (List.append lst lst2, xs)
+    )
+    | (String key)::xs -> (
+      let v-opt = Map.of- string-eq key map in
+      match v-opt with
+      | Some(v) -> (v, xs)
+      | None -> abort-with-message (`Error: Not found value of `# ^ key)
+    )
+    | (TextList lst)::xs -> (lst, xs)
+    | _ -> ([], token-lst)
+
+
+  %! string (text-token list) Map.t -> token list -> ((string, token) list, token list)
+  let-rec parse-field map token-lst =
+    match token-lst with
+    | (String key)::(Equal)::xs -> (
+      let (text-tok-lst, xs) = parse-text map xs in
+      match xs with
+      | (Comma)::xs -> (key, TextList(text-tok-lst)) ^:: parse-field map xs
+      | _ -> ([(String.trim key, TextList(text-tok-lst))], xs)
+    )
+    | (RCurlyBraces)::xs -> ([], token-lst)
+    | x::_ -> abort-with-message (`Error: Unexpected token `# ^ token2message x)
+    | [] -> abort-with-message `Error: Unexpected EOF`
+
+
+  %! string (text-token list) Map.t -> token list -> (string (text-token list) Map.t, token list)
+  let parse-str-def map token-lst =
+    match token-lst with
+    | (RCurlyBraces)::xs -> (map, xs)
+    | _ -> (
+      let (lst, xs) = parse-field map token-lst in
+      match xs with
+      | (RCurlyBraces)::xs -> (
+        let f (key, tok) map =
+          match tok with
+          | TextList(l) -> Map.bind key l map
+          | _ -> map % スルー
+        in
+        let map = List.fold map f lst in
+        (map, xs)
+      )
+      | x::_ -> abort-with-message (`Error: Unexpected token `# ^ token2message x)
+      | [] -> abort-with-message `Error: Unexpected EOF`
+    )
+
+  %! string -> string (text-token list) Map.t -> token list -> (cite, bib, token list)
+  let parse-entry entry-type str-def-map token-lst =
+    match token-lst with
+    | (String cite)::(Comma)::xs -> (
+      let (lst, xs) = parse-field str-def-map xs in
+      match xs with
+      | (RCurlyBraces)::xs -> (
+        let f (key, tok) map =
+          match tok with
+          | TextList(l) -> Map.bind (key |> String.lowercase-ascii |> String.trim) l map
+          | x -> abort-with-message (`Error: Unexpected token `# ^ token2message x)
+        in
+        let map = List.fold Map.empty f lst in
+        let bib =
+          (|
+            entry-type = entry-type;
+            fields = map;
+          |)
+        in
+        (cite, bib, xs)
+      )
+      | x::_ -> abort-with-message (`Error: Unexpected token `# ^ token2message x)
+      | [] -> abort-with-message `Error: Unexpected EOF`
+    )
+    | x::_ -> abort-with-message (`Error: Unexpected token `# ^ token2message x)
+    | [] -> abort-with-message `Error: Unexpected EOF`
+
+
+  let-rec parse-comment token-lst =
+    match token-lst with
+    | (RCurlyBraces)::xs -> xs
+    | _::xs -> parse-comment xs
+    | [] -> abort-with-message `Error: Unexpected EOF`
+
+  let-rec parse-bibtex str-def-map token-lst =
+    match token-lst with
+    | (AtMark)::(String s)::(LCurlyBraces)::xs -> (
+      let s = s |> String.lowercase-ascii |> String.trim in
+      match s with
+      | `comment` -> let xs = parse-comment xs in parse-bibtex str-def-map xs % 無視
+      | `preamble` -> let xs = parse-comment xs in parse-bibtex str-def-map xs % 無視
+      | `string` -> (
+        let (new-str-def-map, xs) = parse-str-def str-def-map xs in
+        parse-bibtex new-str-def-map xs
+      )
+      | _ -> (
+        let (cite, entry, xs) = parse-entry s str-def-map xs in
+        Map.bind (cite |> String.trim) entry (parse-bibtex str-def-map xs)
+      )
+    )
+    | [EOF] -> Map.empty
+    | x::_ -> abort-with-message (`Error: Unexpected token `# ^ token2message x)
+    | [] -> abort-with-message `Error: Unexpected EOF`
+
+
+
+  let parser str =
+    let codepoint-lst = string-explode str in
+    let token-lst = lex-bib codepoint-lst in
+    let bib-map = parse-bibtex Map.empty token-lst in
+    bib-map
+
+
+
+  let parser-from-file file =
+    let str-lst = read-file file in
+    let str = String.concat ?:(lf) str-lst in
+    parser str
+
+end

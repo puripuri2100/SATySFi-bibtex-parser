@@ -1,0 +1,156 @@
+@require: stdjabook
+@require: code-printer/code-printer
+@require: code-printer/code-syntax
+@require: code-printer/code-theme
+@require: itemize
+
+
+%@import: ../src/bibtex-parser
+@require: bibtex-parser/bibtex-parser
+
+
+let demo-bib-str = ```@comment { This is demo. }
+
+@string {
+  latex = {{LaTeX}},
+  year_1994 = 1994,
+}
+
+@BOOK{Lamport94,
+  Author = {Leslie Lamport and Lamport 2 and {L and Lamport 3}},
+  Title = latex # {: {A} Document Preparation System},
+  Publisher = "Addison-Wesley",
+  pages = "156-163",
+  year = year_1994
+}```
+
+
+let demo-function bib =
+  match BibTeXParser.get-entry `Lamport94` bib with
+  | Some(entry) -> (
+    let lf = string-unexplode [0x0A] in
+    let author-lst-str =
+      match BibTeXParser.get-text `author` (Some `and`) BibTeXParser.identity entry with
+      | Some(l) -> (
+        let s =
+          l |> List.map (fun s -> `` ` `` ^ s ^ `` ` ``)
+            |> (fun l -> String.concat ?:(`; `#) l)
+        in
+        `[` ^ s ^ `]`
+      )
+      | None -> abort-with-message `err1`
+    in
+    let title-str =
+      match BibTeXParser.get-text `title` None BibTeXParser.lowercase-ascii entry with
+      | Some([s]) -> s
+      | _ -> abort-with-message `err2`
+    in
+    let year-str =
+      match BibTeXParser.get-text `year` None BibTeXParser.identity entry with
+      | Some([s]) -> s
+      | _ -> abort-with-message `err3`
+    in
+    author-lst-str ^ lf ^ title-str ^ lf ^ year-str
+  )
+  | _ -> abort-with-message `err`
+
+
+let-block ctx +sc code = read-block ctx '<
+  +CodePrinter.code-printer ?:(
+    CodePrinter.default
+    |> CodePrinter.set-syntax CodeSyntax.satysfi
+    |> CodePrinter.set-theme CodeTheme.iceberg-light
+  ) (code);
+>
+
+in
+
+document (|
+  title = {bibtex-parser Manual};
+  author = {Naoki Kaneko a.k.a puripuri2100};
+  show-title = true;
+  show-toc = true;
+|) '<
+  +section {概要} <
+    +p{このライブラリはLaTeXで使われている参考文献管理フォーマットであるBibTeXフォーマットの文字列を解析し、データ構造に変換する関数を提供します。}
+    +p{アクセント記号には対応していますが、それ以外のLaTeXコマンドには対応していません。数式にも対応していません。}
+    +p{SATySFiで使うことができる参考文献組版ライブラリとしてはBiByFiなどが知られていますが、このライブラリではそれらが定義するデータ構造への変換は行わず、独自のデータ構造への変換を行います。}
+  >
+  +section {使い方} <
+    +p{パースのための関数は\listing{
+      * \inline-code(`parser : string -> bibtex`);
+      * \inline-code(`parser-from-file : string -> bibtex`);
+    }の2つを提供しています。\inline-code(`parser`);関数にはBibTeX形式の文字列を、\inline-code(`parser-from-file`);関数にはBibTeXファイルへのパスをそれぞれ与えます。
+    解析に成功した場合には対応するデータ構造を得ることができますが、解析に失敗した場合や与えられたパスが存在しない場合にはエラーを出力して強制終了します。}
+    +p{得られたデータ構造の加工は本ライブラリが提供する関数を用いることで行えます。提供する関数及び型は以下の通りです。\listing {
+      * \inline-code(`entry`);：各文献を表すデータ構造です。
+      * \inline-code(`get-entry : string -> bibtex -> entry option`);：各文献に与えた引用キー(citation-key)を文字列で与えると対応する文献情報が存在する場合にそれを取得することができます。
+      * \inline-code(`bibtex-to-list : bibtex -> (string * entry) list`);：引用キーと各文献のペアのリストに変換します。
+      * \inline-code(`get-entry-type : entry -> string`);：文献がどのタイプであるのかを文字列で取得することができます。例えば\inline-code(`article`);や\inline-code(`misc`);などのものです。これらは全て小文字化されています。
+
+      * \inline-code(`get-text : string -> string option -> process-text -> entry -> (string list) option`);：タグと区切り文字、及び文字データの加工方法を指定することで、文献から対応する文字列のリストを取得します。これらの分割と加工はBibTeXの仕様に則った物になります。また、区切り文字は\inline-code(`regexp-of-string`);関数に渡される正規表現文字列になります。
+      * \inline-code(`process-text`);：テキストの加工方法を表す型です。\inline-code(`get-text`);関数で使います。
+      * \inline-code(`identity : process-text`);：テキストをそのまま文字列にします。
+      * \inline-code(`uppercase-ascii : process-text`);：全てを大文字化します。
+      * \inline-code(`lowercase-ascii : process-text`);：全てを小文字化します。
+      * \inline-code(`capitalize-ascii   : process-text`);：先頭だけ大文字にします。
+      * \inline-code(`uncapitalize-ascii : process-text`);：先頭だけ小文字にします。
+    }}
+  >
+  +section {デモ} <
+    +p{以下のようなBibTeXフォーマットの文字列があるとします。\CodePrinter.code-printer ?:(CodePrinter.default |> CodePrinter.set-theme CodeTheme.iceberg-light) (demo-bib-str);これをパースし、\listing{
+      * 著者名のリスト
+      * 小文字化したタイトル
+      * 出版年
+    }の3つの情報を表示する関数は以下のように定義することができます。}
+    +sc(```let demo-function bib =
+  match BibTeXParser.get-entry `Lamport94` bib with
+  | Some(entry) -> (
+    let lf = string-unexplode [0x0A] in
+    let author-lst-str =
+      match BibTeXParser.get-text `author` (Some `and`) BibTeXParser.identity entry with
+      | Some(l) -> (
+        let s =
+          l |> List.map (fun s -> `` ` `` ^ s ^ `` ` ``)
+            |> (fun l -> String.concat ?:(`; `#) l)
+        in
+        `[` ^ s ^ `]`
+      )
+      | None -> abort-with-message `err1`
+    in
+    let title-str =
+      match BibTeXParser.get-text `title` None BibTeXParser.lowercase-ascii entry with
+      | Some([s]) -> s
+      | _ -> abort-with-message `err2`
+    in
+    let year-str =
+      match BibTeXParser.get-text `year` None BibTeXParser.identity entry with
+      | Some([s]) -> s
+      | _ -> abort-with-message `err3`
+    in
+    author-lst-str ^ lf ^ title-str ^ lf ^ year-str
+  )
+  | _ -> abort-with-message `err` ```);
+    +p{また、実際に}
+    +sc(`demo-bib-str |> BibTeXParser.parser |> demo-function`);
+    +p{のようにして実行すると次のような結果を得ることができます。}
+    +sc(demo-bib-str |> BibTeXParser.parser |> demo-function);
+    +p{著者の分割や意図通りの変換ができていることがわかると思います。}
+  >
+  +section {必要なバージョンや依存など} <
+    +p{このライブラリは\inline-code(`read-file`);プリミティブを使用しています。
+    そのため、\SATySFi;のバージョン0.0.6より後、特に\href (`https://github.com/gfngfn/SATySFi/commit/56895a1b843da427e970a4dd84c433e78dca4a56`) {\inline-code(`56895a1`);}コミット以降のものを使用してください。}
+    +p{また、このライブラリは\SATySFi;の標準ライブラリと、\href(`https://github.com/nyuichi/satysfi-base`){satysfi-base}のv0.16.0以降に依存しています。それぞれのインストールはsatyrographosを使用することを想定しています。}
+  >
+  +section {バグ報告・修正や機能追加の提案}<
+    +p{このパッケージはバグが存在するかもしれません。バグを発見した場合は以下のURLに報告してください。}
+    +p{\href(`https://github.com/puripuri2100/SATySFi-bibtex-parser/issues`){\inline-code(`https://github.com/puripuri2100/SATySFi-bibtex-parser/issues`);}}
+    +p{このパッケージに対してコードの修正や機能追加の提案をしたい場合は、GitHubの機能を用いて以下のURLにプルリクエストを送ってください。}
+    +p{\href(`https://github.com/puripuri2100/SATySFi-bibtex-parser/pulls`){\inline-code(`https://github.com/puripuri2100/SATySFi-bibtex-parser/pulls`);}}
+    +p{バグ報告・修正提案・機能追加提案をお待ちしております。}
+  >
+  +section{ライセンスとコピーライト}<
+    +p{このパッケージとドキュメントはMITライセンスのもとで配布されます。}
+    +p{Copyright (c) 2023 Naoki Kaneko (a.k.a. "puripuri2100")}
+  >
+>

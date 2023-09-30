@@ -1,0 +1,44 @@
+;; For Satyrographos 0.0.2 series
+(version 0.0.2)
+
+;; Library declaration
+(library
+  ;; Library name
+  (name "bibtex-parser")
+  ;; Library version
+  (version "0.1.0")
+  ;; Files
+  (sources
+    ((packageDir "src")))
+  ;; OPAM package file
+  (opam "satysfi-bibtex-parser.opam")
+  ;; Dependency
+  (dependencies
+    ((dist ()) ; Standard library
+     (base ()) ; Base library
+    )))
+
+;; Library doc declaration
+(libraryDoc
+  ;; Library doc name
+  (name "bibtex-parser-doc")
+  ;; Library version
+  (version "0.1.0")
+  ;; Working directory to build docs
+  (workingDirectory "doc")
+  ;; Build commands
+  (build
+    ;; Run SATySFi
+    ((satysfi "bibtex-parser-ja.saty" "-o" "bibtex-parser-ja.pdf")))
+  ;; Files
+  (sources
+    ((doc "bibtex-parser-ja.pdf" "doc/bibtex-parser-ja.pdf")))
+  ;; OPAM package file
+  (opam "satysfi-bibtex-parser-doc.opam")
+  ;; Dependency
+  (dependencies
+    ((bibtex-parser ()) ; the main library
+     (dist ()) ; Standard library
+     (base ()) ; Base library
+     (code-printer ())
+    )))
