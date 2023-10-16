@@ -559,7 +559,9 @@ end = struct
       let (text-tok-lst, xs) = parse-text map xs in
       match xs with
       | (Comma)::xs -> (key, TextList(text-tok-lst)) ^:: parse-field map xs
-      | _ -> ([(String.trim key, TextList(text-tok-lst))], xs)
+      | (RCurlyBraces)::ys -> ([(String.trim key, TextList(text-tok-lst))], xs)
+      | x::_ -> abort-with-message (`Error: Unexpected token `# ^ token2message x)
+      | [] -> abort-with-message `Error: Unexpected EOF`
     )
     | (RCurlyBraces)::xs -> ([], token-lst)
     | x::_ -> abort-with-message (`Error: Unexpected token `# ^ token2message x)
